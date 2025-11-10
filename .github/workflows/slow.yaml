@@ -1,38 +1,78 @@
 name: Run aqua in slow network environment
+
 on:
   workflow_dispatch:
   push:
     branches: [main]
+
 jobs:
   slow-network:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - uses: aquaproj/aqua-installer@11dd79b4e498d471a9385aa9fb7f62bb5f52a73c # v4.0.4
+
+      # 1. Install aqua itself at full speed
+      - name: Install aqua
+        uses: aquaproj/aqua-installer@11dd79b4e498d471a9385aa9fb7f62bb5f52a73c # v4.0.4
         with:
           aqua_version: v2.43.1
-      - name: Detect default network interface
-        id: iface
+
+      # 2. Install Squid (HTTP proxy)
+      - name: Install squid
         run: |
-          IFACE=$(ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}')
-          echo "iface=$IFACE"
-          echo "iface=$IFACE" >> $GITHUB_OUTPUT
-      - name: Throttle to 100 kbps (no loss)
+          sudo apt-get update -y
+          sudo apt-get install -y squid
+
+      # 3. Configure Squid to throttle ONLY specific domains
+      #    100 kb/s ~= 100 kbit/s ~= 12_500 bytes/s
+      - name: Configure throttled proxy
         run: |
-          IFACE="${{ steps.iface.outputs.iface }}"
-          echo "Using interface: $IFACE"
-          # Token Bucket Filter: 100 kbit/s, small burst, modest latency
-          sudo tc qdisc add dev "$IFACE" root tbf \
-            rate 100kbit \
-            burst 16kbit \
-            latency 200ms
-          sudo tc qdisc show dev "$IFACE"
-      - name: Run tests under slow network
+          sudo tee /etc/squid/squid.conf >/dev/null << 'EOF'
+          http_port 3128
+          # Be permissive for this CI scenario
+          acl all src 0.0.0.0/0
+          http_access allow all
+
+          # Domains used by aqua lazy installs (adjust as needed)
+          acl aqua_throttled dstdomain \
+              .github.com \
+              .githubusercontent.com \
+              .ghcr.io \
+              .aquaproj.github.io
+
+          # One delay pool, class 1 (aggregate)
+          delay_pools 1
+          delay_class 1 1
+
+          # 100 kbit/s (≈12500 B/s) both max + sustained
+          delay_parameters 1 12500/12500
+
+          # Apply throttling only to aqua_throttled destinations
+          delay_access 1 allow aqua_throttled
+          delay_access 1 deny all
+          EOF
+
+      # 4. Start Squid
+      - name: Start squid
+        run: |
+          sudo systemctl restart squid
+          sleep 3
+          sudo systemctl status squid --no-pager || (echo "Squid failed to start" && exit 1)
+
+      # 5. Run aqua i through the throttled proxy
+      - name: Run aqua i under slow network (scoped)
+        env:
+          # Only this step is proxied
+          HTTP_PROXY: http://127.0.0.1:3128
+          HTTPS_PROXY: http://127.0.0.1:3128
+          NO_PROXY: 127.0.0.1,localhost
         run: |
           aqua i
-      - name: Remove throttling
+
+      # 6. Stop proxy (optional cleanup)
+      - name: Stop squid
         if: always()
         run: |
-          IFACE="${{ steps.iface.outputs.iface }}"
-          sudo tc qdisc del dev "$IFACE" root || true
-          sudo tc qdisc show dev "$IFACE" || true
+          sudo systemctl stop squid || truename: Run aqua in slow network environment
+
