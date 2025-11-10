@@ -1,0 +1,38 @@
+name: Run aqua in slow network environment
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  slow-network:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquaproj/aqua-installer@11dd79b4e498d471a9385aa9fb7f62bb5f52a73c # v4.0.4
+        with:
+          aqua_version: v2.43.1
+      - name: Detect default network interface
+        id: iface
+        run: |
+          IFACE=$(ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}')
+          echo "iface=$IFACE"
+          echo "iface=$IFACE" >> $GITHUB_OUTPUT
+      - name: Throttle to 100 kbps (no loss)
+        run: |
+          IFACE="${{ steps.iface.outputs.iface }}"
+          echo "Using interface: $IFACE"
+          # Token Bucket Filter: 100 kbit/s, small burst, modest latency
+          sudo tc qdisc add dev "$IFACE" root tbf \
+            rate 100kbit \
+            burst 16kbit \
+            latency 200ms
+          sudo tc qdisc show dev "$IFACE"
+      - name: Run tests under slow network
+        run: |
+          aqua i
+      - name: Remove throttling
+        if: always()
+        run: |
+          IFACE="${{ steps.iface.outputs.iface }}"
+          sudo tc qdisc del dev "$IFACE" root || true
+          sudo tc qdisc show dev "$IFACE" || true
