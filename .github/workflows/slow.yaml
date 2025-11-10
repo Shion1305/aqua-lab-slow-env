@@ -46,7 +46,7 @@ jobs:
           delay_class 1 1
 
           # 100 kbit/s (≈12500 B/s) both max + sustained
-          delay_parameters 1 12500/12500
+          delay_parameters 1 125000/125000
 
           # Apply throttling only to aqua_throttled destinations
           delay_access 1 allow aqua_throttled
