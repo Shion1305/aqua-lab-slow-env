@@ -11,7 +11,7 @@ registries:
 - type: standard
   ref: v4.433.0 # renovate: depName=aquaproj/aqua-registry
 packages:
-- name: suzuki-shunsuke/tfcmt@v4.14.12
+- name: suzuki-shunsuke/tfcmt@v4.14.15
 - name: google/yamlfmt@v0.20.0
 - name: FairwindsOps/nova@v3.11.9
 - name: okta/okta-aws-cli@v2.5.0
